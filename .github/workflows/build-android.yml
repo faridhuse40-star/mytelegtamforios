@@ -33,8 +33,8 @@ jobs:
     timeout-minutes: 60
 
     env:
-      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'http://10.0.2.2:4000' }}
-      EXPO_PUBLIC_SOCKET_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'http://10.0.2.2:4000' }}
+      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'https://messenger-api-far.fly.dev' }}
+      EXPO_PUBLIC_SOCKET_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'https://messenger-api-far.fly.dev' }}
 
     steps:
       - name: Checkout
