@@ -39,6 +39,23 @@ import { getSocket } from "../../services/socket";
 import { useAuthStore } from "../../store/auth";
 import { blockUser, hideChatForSelf, isChatMuted, isUserBlocked, muteChat } from "../../services/storage";
 
+// Platform-optimised recording options: explicit AAC on Android for consistent
+// format and MIME type; HIGH_QUALITY preset on iOS (produces .m4a / AAC).
+const VOICE_RECORDING_OPTIONS: Audio.RecordingOptions = Platform.OS === "android"
+  ? {
+      android: {
+        extension: ".aac",
+        outputFormat: Audio.AndroidOutputFormat.AAC_ADTS,
+        audioEncoder: Audio.AndroidAudioEncoder.AAC,
+        sampleRate: 44100,
+        numberOfChannels: 1,
+        bitRate: 128000,
+      },
+      ios: Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
+      web: {},
+    }
+  : Audio.RecordingOptionsPresets.HIGH_QUALITY;
+
 // Simple client-side nonce for optimistic message IDs.
 function nonce() {
   return `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -424,7 +441,7 @@ export default function ChatDetailScreen() {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       setRecordMs(0);
       const created = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        VOICE_RECORDING_OPTIONS,
         (st) => setRecordMs(st.durationMillis ?? 0),
         500,
       );
@@ -444,7 +461,14 @@ export default function ChatDetailScreen() {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: false, playsInSilentModeIOS: true });
       if (sendIt && uri) {
         const durationSec = Math.max(1, Math.round((status.durationMillis ?? recordMs) / 1000));
-        sendWithUpload("voice", { uri, name: `voice-${Date.now()}.m4a`, mimeType: "audio/m4a" }, { durationSec });
+        // Derive MIME type from the actual recorded file so it matches on both platforms.
+        const ext = uri.split(".").pop()?.toLowerCase() ?? "m4a";
+        const mimeMap: Record<string, string> = {
+          m4a: "audio/m4a", aac: "audio/aac", mp4: "audio/mp4",
+          "3gp": "audio/3gpp", amr: "audio/amr", caf: "audio/x-caf",
+        };
+        const mimeType = mimeMap[ext] ?? "audio/m4a";
+        sendWithUpload("voice", { uri, name: `voice-${Date.now()}.${ext}`, mimeType }, { durationSec });
       }
     } catch {}
   }

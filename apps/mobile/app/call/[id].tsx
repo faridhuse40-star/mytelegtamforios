@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, Alert, Platform, PermissionsAndroid } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
@@ -85,6 +85,8 @@ export default function CallScreen() {
   const offerWhenReadyRef = useRef(false);
   // ICE candidates that arrived before the remote description was set.
   const pendingIceRef = useRef<any[]>([]);
+  // SDP offer that arrived while getUserMedia was still pending (callee race-condition fix).
+  const pendingOfferRef = useRef<any>(null);
 
   // Start elapsed timer when call becomes active.
   useEffect(() => {
@@ -139,34 +141,87 @@ export default function CallScreen() {
 
     async function setup() {
       if (!WebRTC) return; // Running in Expo Go — show UI only, no media.
-      const { RTCPeerConnection, mediaDevices } = WebRTC;
+      const { RTCPeerConnection, mediaDevices, RTCSessionDescription: RTCSD } = WebRTC;
+
+      // Android: explicitly request microphone (+ camera for video) permissions.
+      if (Platform.OS === "android") {
+        try {
+          const perms: string[] = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
+          if (kind === "video") perms.push(PermissionsAndroid.PERMISSIONS.CAMERA);
+          const results = await PermissionsAndroid.requestMultiple(perms);
+          const allGranted = perms.every((p) => results[p] === PermissionsAndroid.RESULTS.GRANTED);
+          if (!allGranted) {
+            Alert.alert("Нет доступа к микрофону", "Разрешите доступ в настройках устройства");
+            end("ended");
+            return;
+          }
+        } catch {}
+      }
+
       await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
+        allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,
         shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
+        // Audio calls → earpiece; video calls → loudspeaker.
+        playThroughEarpieceAndroid: kind !== "video",
       });
-      const ice = await CallAPI.iceConfig().catch(() => []);
-      const pc = new RTCPeerConnection({ iceServers: ice });
+
+      // Merge server ICE config with extra public STUN servers and a free TURN
+      // relay so calls work between real devices on mobile carrier networks (NAT).
+      const serverIce = await CallAPI.iceConfig().catch((): any[] => []);
+      const hasTurn = serverIce.some((s: any) => String(s.urls).startsWith("turn:"));
+      const iceServers = [
+        ...serverIce,
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        ...(hasTurn
+          ? []
+          : [
+              // Free public TURN relay — fallback when no private TURN is configured.
+              { urls: "turn:openrelay.metered.ca:80",                username: "openrelayproject", credential: "openrelayproject" },
+              { urls: "turn:openrelay.metered.ca:443",               username: "openrelayproject", credential: "openrelayproject" },
+              { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+            ]),
+      ];
+
+      const pc = new RTCPeerConnection({ iceServers });
       const pcAny = pc as any;
       pcRef.current = pc;
 
-      const stream = await mediaDevices.getUserMedia({
-        audio: true,
-        video: kind === "video",
-      });
-      localStreamRef.current = stream;
-      setLocalStream(stream);
-      stream.getTracks().forEach((t: any) => pc.addTrack(t, stream));
+      // Acquire local media — show a friendly alert on failure.
+      try {
+        const stream = await mediaDevices.getUserMedia({ audio: true, video: kind === "video" });
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+        stream.getTracks().forEach((t: any) => pc.addTrack(t, stream));
+      } catch {
+        Alert.alert("Нет доступа к микрофону", "Разрешите доступ к микрофону и камере в настройках");
+        end("ended");
+        return;
+      }
 
+      // ontrack fires when the remote peer's media tracks arrive.
       pcAny.ontrack = (e: any) => {
-        const incoming = e.streams?.[0];
-        if (incoming) setRemoteStream(incoming);
+        const s = e.streams?.[0];
+        if (s) setRemoteStream(s);
       };
 
       pcAny.onconnectionstatechange = () => {
-        if (pcAny.connectionState === "connected") setStatus("active");
+        const state: string = pcAny.connectionState;
+        if (state === "connected") setStatus("active");
+        else if (state === "failed") {
+          Alert.alert("Соединение прервано", "Не удалось установить связь. Попробуйте ещё раз.");
+          end("ended");
+        }
+      };
+
+      // ICE restart on negotiation failure — caller initiates renegotiation.
+      pcAny.oniceconnectionstatechange = () => {
+        if (pcAny.iceConnectionState === "failed" && role === "caller") {
+          try { pcAny.restartIce?.(); } catch {}
+          void makeOffer();
+        }
       };
 
       pcAny.onicecandidate = (e: any) => {
@@ -179,6 +234,18 @@ export default function CallScreen() {
       if (offerWhenReadyRef.current && role === "caller") {
         offerWhenReadyRef.current = false;
         await makeOffer();
+      }
+
+      // Drain any offer that arrived while getUserMedia was still pending
+      // (callee race-condition: caller sends offer before callee's PC is ready).
+      if (pendingOfferRef.current && role === "callee") {
+        const buffered = pendingOfferRef.current as { sdp: string };
+        pendingOfferRef.current = null;
+        await pc.setRemoteDescription(new RTCSD({ type: "offer", sdp: buffered.sdp }));
+        await flushPendingIce(pc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        activeSocket.emit("call:signal", { callId, data: { type: "answer", sdp: answer.sdp! } });
       }
     }
 
@@ -195,22 +262,29 @@ export default function CallScreen() {
 
     const onSignal = async (p: { callId: string; from: string; data: any }) => {
       if (p.callId !== callId || !WebRTC) return;
-      const pc = pcRef.current;
-      if (!pc) return;
       const { RTCSessionDescription, RTCIceCandidate } = WebRTC;
+      const pc = pcRef.current;
+
       if (p.data.type === "offer") {
+        // Buffer the offer if the PeerConnection isn't set up yet
+        // (getUserMedia still pending on callee side — race condition).
+        if (!pc) {
+          pendingOfferRef.current = p.data;
+          return;
+        }
         await pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp: p.data.sdp }));
         await flushPendingIce(pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         activeSocket.emit("call:signal", { callId, data: { type: "answer", sdp: answer.sdp! } });
       } else if (p.data.type === "answer") {
+        if (!pc) return;
         await pc.setRemoteDescription(new RTCSessionDescription({ type: "answer", sdp: p.data.sdp }));
         await flushPendingIce(pc);
       } else if (p.data.type === "ice") {
         // Buffer candidates until the remote description exists, otherwise
         // addIceCandidate throws and the candidate is silently lost.
-        if (!pc.remoteDescription) {
+        if (!pc || !pc.remoteDescription) {
           pendingIceRef.current.push(p.data.candidate);
           return;
         }
