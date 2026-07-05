@@ -1,0 +1,38 @@
+# Fly.io app config for Messenger API.
+# Deploy with: flyctl deploy --remote-only
+
+app = "messenger-api-far"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  PORT = "4000"
+  HOST = "0.0.0.0"
+  CORS_ORIGIN = "*"
+  JWT_ACCESS_TTL_SEC = "900"
+  JWT_REFRESH_TTL_SEC = "604800"
+  # DATABASE_URL, REDIS_URL, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET,
+  # TURN_URL, TURN_USERNAME, TURN_PASSWORD,
+  # RESEND_API_KEY, MAIL_FROM,
+  # SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS
+  # set via `fly secrets set`.
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 400
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

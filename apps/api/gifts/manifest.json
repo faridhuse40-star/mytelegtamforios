@@ -1,0 +1,20 @@
+{
+  "gifts": [
+    { "slug": "heart",     "name": "Сердце",          "emoji": "❤️", "stars": 15 },
+    { "slug": "bear",      "name": "Мишка",           "emoji": "🧸", "stars": 15 },
+    { "slug": "rose",      "name": "Роза",            "emoji": "🌹", "stars": 25 },
+    { "slug": "gift_box",  "name": "Подарок",         "emoji": "🎁", "stars": 25 },
+    { "slug": "cake",      "name": "Торт",            "emoji": "🎂", "stars": 50 },
+    { "slug": "bouquet",   "name": "Букет",           "emoji": "💐", "stars": 50 },
+    { "slug": "rocket",    "name": "Ракета",          "emoji": "🚀", "stars": 50 },
+    { "slug": "champagne", "name": "Шампанское",      "emoji": "🍾", "stars": 50 },
+    { "slug": "trophy",    "name": "Кубок",           "emoji": "🏆", "stars": 100 },
+    { "slug": "ring",      "name": "Кольцо",          "emoji": "💍", "stars": 100 },
+    { "slug": "diamond",   "name": "Бриллиант",       "emoji": "💎", "stars": 100 },
+    { "slug": "crown",     "name": "Корона",          "emoji": "👑", "stars": 250, "supply": 5000 },
+    { "slug": "unicorn",   "name": "Единорог",        "emoji": "🦄", "stars": 250, "supply": 3000 },
+    { "slug": "genie_lamp","name": "Лампа джинна",    "emoji": "🪔", "stars": 500, "supply": 1000 },
+    { "slug": "shooting_star", "name": "Падающая звезда", "emoji": "🌠", "stars": 500, "supply": 1000 },
+    { "slug": "phoenix",   "name": "Феникс",          "emoji": "🔥", "stars": 1000, "supply": 500 }
+  ]
+}

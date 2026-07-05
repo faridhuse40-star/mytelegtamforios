@@ -1,0 +1,29 @@
+node_modules/
+**/node_modules/
+**/.expo/
+**/dist/
+**/build/
+**/.next/
+**/ios/Pods/
+**/ios/build/
+**/android/.gradle/
+**/android/build/
+**/android/app/build/
+*.log
+.env
+**/.env
+**/.env.local
+**/.DS_Store
+**/Thumbs.db
+**/.turbo/
+**/.cache/
+**/coverage/
+apps/api/prisma/migrations/dev.db*
+
+# Built APK / IPA — keep folder, ignore binaries
+releases/*
+!releases/.gitkeep
+!releases/README.md
+
+# Local cloudflared tunnel URL
+.tunnel-url.txt

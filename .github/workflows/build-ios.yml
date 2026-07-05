@@ -1,0 +1,137 @@
+name: Build iOS IPA (unsigned)
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/shared/**'
+      - '.github/workflows/build-ios.yml'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: 'API URL (e.g. https://messenger-api-far.fly.dev). Leave empty to use repo variable API_URL or the Fly.io default.'
+        required: false
+        default: ''
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Archive + export unsigned IPA
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    env:
+      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'https://messenger-api-far.fly.dev' }}
+      EXPO_PUBLIC_SOCKET_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'https://messenger-api-far.fly.dev' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 15.4
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Ruby for CocoaPods
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: false
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/mobile/ios/Pods
+            ~/.cocoapods
+            ~/Library/Caches/CocoaPods
+          key: ${{ runner.os }}-pods-${{ hashFiles('apps/mobile/ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Install workspace dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build shared package
+        run: npm run shared:build
+
+      - name: Expo prebuild (generate ios/)
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Pod install
+        working-directory: apps/mobile/ios
+        run: |
+          gem install cocoapods --no-document
+          pod install --repo-update
+
+      - name: Resolve workspace + scheme
+        id: ws
+        working-directory: apps/mobile/ios
+        run: |
+          WORKSPACE=$(ls -d *.xcworkspace | head -n1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "workspace=$WORKSPACE" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Workspace=$WORKSPACE Scheme=$SCHEME"
+
+      - name: Archive (no code signing)
+        working-directory: apps/mobile/ios
+        run: |
+          mkdir -p build
+          set -o pipefail
+          xcodebuild \
+            -workspace "${{ steps.ws.outputs.workspace }}" \
+            -scheme "${{ steps.ws.outputs.scheme }}" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Messenger.xcarchive \
+            -allowProvisioningUpdates \
+            -quiet \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY_NAME="" \
+            DEVELOPMENT_TEAM="" \
+            archive
+
+      - name: Package unsigned IPA from archive
+        working-directory: apps/mobile/ios
+        run: |
+          APP_PATH=$(find build/Messenger.xcarchive/Products/Applications -type d -name "*.app" | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "App bundle not found in archive" && exit 1
+          fi
+          rm -rf build/Payload build/Messenger-unsigned.ipa
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          (cd build && zip -qr Messenger-unsigned.ipa Payload)
+          ls -lh build/Messenger-unsigned.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-ios-unsigned-${{ github.run_number }}
+          path: apps/mobile/ios/build/Messenger-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish IPA to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apps/mobile/ios/build/Messenger-unsigned.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

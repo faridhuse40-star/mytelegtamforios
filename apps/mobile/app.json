@@ -1,0 +1,73 @@
+{
+  "expo": {
+    "name": "Messenger",
+    "slug": "messenger",
+    "version": "0.1.0",
+    "scheme": "messenger",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.messenger.app",
+      "userInterfaceStyle": "dark",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Нужен доступ к камере для видеозвонков и съёмки аватара",
+        "NSMicrophoneUsageDescription": "Нужен доступ к микрофону для голосовых и видеозвонков",
+        "NSPhotoLibraryUsageDescription": "Нужен доступ к галерее для отправки фото и выбора аватара",
+        "UIBackgroundModes": ["audio", "voip"]
+      }
+    },
+    "android": {
+      "package": "com.messenger.app",
+      "userInterfaceStyle": "dark",
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Нужен доступ к фото для выбора аватара и отправки изображений"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FFFFFF"
+        }
+      ],
+      "@config-plugins/react-native-webrtc",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25",
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0"
+          },
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "https://messenger-api-far.fly.dev",
+      "socketUrl": "https://messenger-api-far.fly.dev"
+    }
+  }
+}

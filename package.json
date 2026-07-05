@@ -1,0 +1,23 @@
+{
+  "name": "messenger",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "mobile": "npm --workspace apps/mobile run start",
+    "mobile:ios": "npm --workspace apps/mobile run ios",
+    "mobile:android": "npm --workspace apps/mobile run android",
+    "api:dev": "npm --workspace apps/api run dev",
+    "api:build": "npm --workspace apps/api run build",
+    "api:migrate": "npm --workspace apps/api run prisma:migrate",
+    "shared:build": "npm --workspace packages/shared run build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

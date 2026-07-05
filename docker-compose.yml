@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: messenger
+      POSTGRES_PASSWORD: messenger
+      POSTGRES_DB: messenger
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U messenger"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      HOST: "0.0.0.0"
+      DATABASE_URL: "postgresql://messenger:messenger@postgres:5432/messenger?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-change_me_access}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change_me_refresh}
+      JWT_ACCESS_TTL_SEC: "900"
+      JWT_REFRESH_TTL_SEC: "604800"
+      CORS_ORIGIN: "*"
+      TURN_URL: "turn:coturn:3478"
+      TURN_USERNAME: "messenger"
+      TURN_PASSWORD: "messenger"
+    ports:
+      - "4000:4000"
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    command:
+      [
+        "turnserver",
+        "-n",
+        "--log-file=stdout",
+        "--lt-cred-mech",
+        "--user=messenger:messenger",
+        "--realm=messenger.local",
+        "--fingerprint",
+        "--no-multicast-peers",
+        "--no-cli",
+        "--min-port=49152",
+        "--max-port=49200",
+      ]
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,201 @@
+// Prisma schema for the messenger API.
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  username       String    @unique
+  firstName      String
+  lastName       String
+  passwordHash   String
+  bio            String?   @db.VarChar(70)
+  avatarUrl      String?
+  emailVerified  Boolean   @default(false)
+  emailVerificationCodeHash String?
+  emailVerificationExpiresAt DateTime?
+  lastSeenAt     DateTime?
+  // In-app "Stars" balance (seeded to 1000 for new accounts; spent/earned via gifts).
+  starsBalance   Int       @default(1000)
+  // UI accent color preference (hex like #7B61FF). Null = default monochrome.
+  accentColor    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  refreshTokens  RefreshToken[]
+  chatsA         Chat[]     @relation("ChatUserA")
+  chatsB         Chat[]     @relation("ChatUserB")
+  messages       Message[]  @relation("MessageSender")
+  reads          ChatRead[]
+  callsFrom      Call[]     @relation("CallFrom")
+  callsTo        Call[]     @relation("CallTo")
+  uploads        UploadAsset[]
+  searchHistory  SearchHistory[]
+  giftsSent      GiftInstance[] @relation("GiftSender")
+  giftsReceived  GiftInstance[] @relation("GiftReceiver")
+
+  @@index([username])
+  @@index([email])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// 1:1 personal chat between two distinct users (userAId < userBId for uniqueness).
+model Chat {
+  id        String    @id @default(cuid())
+  userAId   String
+  userBId   String
+  userA     User      @relation("ChatUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User      @relation("ChatUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  pinnedByA Boolean   @default(false)
+  pinnedByB Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  messages  Message[]
+  reads     ChatRead[]
+
+  @@unique([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
+}
+
+model Message {
+  id          String    @id @default(cuid())
+  chatId      String
+  chat        Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  kind        String    @default("text") // text | image | file | system
+  text        String?
+  attachments Json?
+  clientNonce String?
+  replyToId   String?
+  replyTo     Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[] @relation("MessageReply")
+  deliveredAt DateTime?
+  readAt      DateTime?
+  editedAt    DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([chatId, createdAt])
+  @@index([senderId])
+  @@unique([senderId, clientNonce])
+}
+
+// Tracks last read message per user per chat.
+model ChatRead {
+  id              String @id @default(cuid())
+  chatId          String
+  userId          String
+  upToMessageId   String?
+  updatedAt       DateTime @updatedAt
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+}
+
+model Call {
+  id          String   @id @default(cuid())
+  fromUserId  String
+  toUserId    String
+  kind        String   // audio | video
+  status      String   // ringing | active | ended | missed | declined
+  startedAt   DateTime @default(now())
+  acceptedAt  DateTime?
+  endedAt     DateTime?
+  durationSec Int      @default(0)
+
+  from User @relation("CallFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  to   User @relation("CallTo",   fields: [toUserId],   references: [id], onDelete: Cascade)
+
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([startedAt])
+}
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model UploadAsset {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  mimeType  String
+  size      Int
+  bytes     Bytes
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, createdAt])
+}
+
+// Gift catalog — populated at boot from apps/api/gifts/manifest.json.
+model Gift {
+  slug        String   @id
+  name        String
+  stars       Int
+  supply      Int?     // null = unlimited
+  sold        Int      @default(0)
+  emoji       String?
+  // True when a Lottie animation was prepared for this gift at boot.
+  animated    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  instances   GiftInstance[]
+}
+
+// Materialized gift owned by a user (immutable once sent, except for hide/convert flags).
+model GiftInstance {
+  id              String   @id @default(cuid())
+  giftSlug        String
+  gift            Gift     @relation(fields: [giftSlug], references: [slug], onDelete: Restrict)
+  senderId        String
+  sender          User     @relation("GiftSender",   fields: [senderId],   references: [id], onDelete: Cascade)
+  receiverId      String
+  receiver        User     @relation("GiftReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  message         String?  @db.VarChar(255)
+  // Position in the global supply (e.g. 42 of 10000). Snapshot at send time.
+  editionNumber   Int
+  // Telegram-style anonymous send: the sender identity is hidden from everyone
+  // (including the receiver) except the sender themselves.
+  anonymous       Boolean  @default(false)
+  hiddenOnProfile Boolean  @default(false)
+  convertedAt     DateTime?
+  starsRefunded   Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([receiverId, createdAt])
+  @@index([senderId, createdAt])
+  @@index([giftSlug])
+}

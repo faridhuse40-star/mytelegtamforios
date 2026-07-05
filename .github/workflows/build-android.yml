@@ -1,0 +1,115 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/shared/**'
+      - '.github/workflows/build-android.yml'
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: 'API URL (e.g. https://api.example.com). Leave empty to use repo variable API_URL.'
+        required: false
+        default: ''
+      build_type:
+        description: 'Build type'
+        required: false
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'http://10.0.2.2:4000' }}
+      EXPO_PUBLIC_SOCKET_URL: ${{ github.event.inputs.api_url || vars.API_URL || 'http://10.0.2.2:4000' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Install workspace dependencies
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build shared package
+        run: npm run shared:build
+
+      - name: Show env that will be embedded
+        run: |
+          echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
+          echo "EXPO_PUBLIC_SOCKET_URL=$EXPO_PUBLIC_SOCKET_URL"
+
+      - name: Expo prebuild (generate android/)
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Make gradlew executable
+        working-directory: apps/mobile/android
+        run: chmod +x gradlew
+
+      - name: Assemble APK (${{ github.event.inputs.build_type || 'release' }})
+        working-directory: apps/mobile/android
+        run: |
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'release' }}"
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            ./gradlew --no-daemon assembleDebug
+          else
+            ./gradlew --no-daemon assembleRelease
+          fi
+
+      - name: Locate APK
+        id: apk
+        working-directory: apps/mobile/android
+        run: |
+          APK_PATH=$(find app/build/outputs/apk -name "*.apk" | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK not found" && exit 1
+          fi
+          echo "apk_path=apps/mobile/android/$APK_PATH" >> "$GITHUB_OUTPUT"
+          ls -lh "$APK_PATH"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: messenger-android-${{ github.event.inputs.build_type || 'release' }}-${{ github.run_number }}
+          path: ${{ steps.apk.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish APK to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.apk_path }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
